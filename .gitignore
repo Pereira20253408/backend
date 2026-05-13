@@ -1,0 +1,12 @@
+# Ignorar entornos virtuales
+venv/
+.venv/
+
+# Ignorar secretos y llaves (¡Vital!)
+.env
+*.json
+!requirements.txt
+
+# Ignorar caché de Python
+__pycache__/
+*.py[cod]
