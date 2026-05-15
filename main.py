@@ -19,6 +19,7 @@ class WatchlistItem(BaseModel):
     precio_objetivo: float
     soporte_tecnico: float
     fecha_analisis: str = str(datetime.now().date())
+    seguimiento_activo: bool = True
 
 # Configurar CORS
 app.add_middleware(
@@ -157,7 +158,7 @@ def tarea_vigilancia():
         return
 
     try:
-        docs = db.collection("watchlist").stream()
+        docs = db.collection("watchlist").where("seguimiento_activo", "==", True).stream()
         for doc in docs:
             item = doc.to_dict()
             ticker = item["ticker"]

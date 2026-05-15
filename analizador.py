@@ -3,7 +3,7 @@ import requests
 import pandas as pd
 from dotenv import load_dotenv
 import google.generativeai as genai
-import yfinance as yf
+
 
 # Cargar variables de entorno desde el archivo .env
 load_dotenv()
@@ -146,23 +146,32 @@ class AnalizadorFinanciero:
 
     def obtener_precios_historicos(self, ticker: str, days: int = 365) -> pd.DataFrame:
         """
-        Obtiene el historial de precios diarios usando yfinance (gratuito y sin restricciones).
+        Obtiene el historial de precios diarios usando la API de FMP (inmunidad total en Railway).
         """
         try:
-            stock = yf.Ticker(ticker.upper())
-            # Convertir días a formato de periodo de yfinance (1y, 2y, etc)
-            period = "1y" if days <= 365 else "2y"
-            df = stock.history(period=period)
+            url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{ticker.upper()}?apikey={self.api_key}"
+            response = requests.get(url)
+            response.raise_for_status()
+            data = response.json()
             
+            if not data or "historical" not in data:
+                print(f"Advertencia: No se encontraron datos históricos de FMP para {ticker.upper()}.")
+                return pd.DataFrame()
+                
+            df = pd.DataFrame(data["historical"])
             if df.empty:
                 return pd.DataFrame()
                 
-            df = df.reset_index()
+            # Ordenar las fechas de la más antigua a la más reciente
+            df = df.sort_values('date').reset_index(drop=True)
+            
+            # Asegurar que las columnas estén en minúsculas (close, high, low, etc.)
             df.columns = [c.lower() for c in df.columns]
+            
             return df.tail(days)
             
         except Exception as e:
-            print(f"Error al obtener precios con yfinance: {e}")
+            print(f"Error al obtener precios con FMP: {e}")
             return pd.DataFrame()
 
     def identificar_soportes(self, df: pd.DataFrame, window: int = 20) -> list:
