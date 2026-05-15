@@ -269,24 +269,25 @@ class AnalizadorFinanciero:
             "precio_actual": precio_actual
         }
 
-    def obtener_noticias_recientes(self, ticker: str, limit: int = 5) -> str:
+    def obtener_noticias_recientes(self, ticker: str, limit: int = 5) -> list:
         """
-        Obtiene las últimas noticias usando yfinance.
+        Obtiene las últimas noticias usando la API de FMP.
         """
         try:
-            stock = yf.Ticker(ticker.upper())
-            news = stock.news
+            url = f"https://financialmodelingprep.com/api/v3/stock_news?tickers={ticker.upper()}&limit={limit}&apikey={self.api_key}"
+            response = requests.get(url)
+            response.raise_for_status()
+            news = response.json()
             
             if not news:
-                return ""
+                return []
                 
-            # Combinar los títulos de las noticias (yfinance news suele tener title y link)
-            textos = [f"Título: {n.get('title')}\nFuente: {n.get('publisher')}" for n in news[:limit]]
-            return "\n\n---\n\n".join(textos)
+            textos = [f"Título: {n.get('title')}\nFuente: {n.get('site')}\nResumen: {n.get('text')}" for n in news[:limit]]
+            return textos
             
         except Exception as e:
-            print(f"Error al obtener noticias con yfinance: {e}")
-            return ""
+            print(f"Error al obtener noticias con FMP: {e}")
+            return []
 
     def analizar_riesgos_ia(self, ticker: str) -> dict:
         """
@@ -295,9 +296,8 @@ class AnalizadorFinanciero:
         if not self.model:
             return {"error": "IA no configurada (falta GOOGLE_API_KEY)"}
             
-        texto_noticias = self.obtener_noticias_recientes(ticker)
-        if not texto_noticias:
-            return {"error": "No hay noticias suficientes para el análisis IA."}
+        noticias_lista = self.obtener_noticias_recientes(ticker)
+        texto_noticias = "\n\n---\n\n".join(noticias_lista) if noticias_lista else "No se encontraron noticias recientes. Basa el análisis en tu conocimiento general de los fundamentos y modelo de negocio de la empresa."
             
         prompt = f"""
         Actúa como un Analista de Riesgos Senior y experto en inversiones de Warren Buffett.
