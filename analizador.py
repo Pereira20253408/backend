@@ -228,7 +228,20 @@ class AnalizadorFinanciero:
 
         rsi = self.calcular_rsi(df)
         soportes = self.identificar_soportes(df)
-        precio_actual = float(df["close"].iloc[-1])
+        
+        endpoint = f"{self.base_url}/quote"
+        params = {
+            "symbol": ticker.upper(),
+            "apikey": self.api_key
+        }
+        try:
+            response = requests.get(endpoint, params=params)
+            response.raise_for_status()
+            data = response.json()
+            precio_actual = data[0]['price']
+        except Exception as e:
+            print(f"Error al obtener precio actual de FMP para {ticker}: {e}")
+            precio_actual = float(df["close"].iloc[-1])
 
         # Determinar mensaje RSI
         rsi_mensaje = "Neutral"
