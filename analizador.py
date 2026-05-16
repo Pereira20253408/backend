@@ -259,13 +259,23 @@ class AnalizadorFinanciero:
             soporte_cercano = max(soportes_debajo)
             distancia_soporte = round(((precio_actual - soporte_cercano) / precio_actual) * 100, 2)
 
+        historico = []
+        if not df.empty:
+            for _, row in df.iterrows():
+                fecha_str = str(row['Date']).split('T')[0].split(' ')[0]
+                historico.append({
+                    "date": fecha_str,
+                    "close": round(float(row['Close']), 2)
+                })
+
         return {
             "rsi": rsi,
             "rsi_mensaje": rsi_mensaje,
             "soportes": soportes,
             "soporte_cercano": soporte_cercano,
             "distancia_soporte_porcentaje": distancia_soporte,
-            "precio_actual": precio_actual
+            "precio_actual": precio_actual,
+            "historico": historico
         }
 
     def obtener_noticias_recientes(self, ticker: str, limit: int = 5) -> list:
