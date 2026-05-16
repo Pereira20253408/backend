@@ -3,6 +3,7 @@ import requests
 import pandas as pd
 from dotenv import load_dotenv
 import google.generativeai as genai
+from datetime import datetime, timedelta
 
 
 # Cargar variables de entorno desde el archivo .env
@@ -146,32 +147,30 @@ class AnalizadorFinanciero:
 
     def obtener_precios_historicos(self, ticker: str, days: int = 365) -> pd.DataFrame:
         """
-        Obtiene el historial de precios diarios usando la API de FMP (inmunidad total en Railway).
+        Obtiene el historial de precios diarios usando la API de Tiingo (inmunidad total en Railway).
         """
         try:
-            url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{ticker.upper()}?apikey={self.api_key}"
+            tiingo_token = os.getenv("TIINGO_API_KEY")
+            if not tiingo_token:
+                print("Advertencia: TIINGO_API_KEY no está configurada.")
+                return pd.DataFrame()
+                
+            fecha_inicio = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
+            url = f"https://api.tiingo.com/tiingo/daily/{ticker.lower()}/prices?startDate={fecha_inicio}&token={tiingo_token}"
+            
             response = requests.get(url)
-            
-            print("--- DEBUG FMP HISTORICO ---")
-            print("Status Code:", response.status_code)
-            print("Keys del JSON:", response.json().keys() if response.status_code == 200 else "No es 200")
-            print("---------------------------")
-            
             response.raise_for_status()
             data = response.json()
             
-            if not data or "historical" not in data:
-                print(f"Advertencia: No se encontraron datos históricos de FMP para {ticker.upper()}. Estructura recibida: {data}")
+            if not data:
+                print(f"Advertencia: No se encontraron datos históricos de Tiingo para {ticker.upper()}.")
                 return pd.DataFrame()
                 
-            df = pd.DataFrame(data["historical"])
+            df = pd.DataFrame(data)
             if df.empty:
                 return pd.DataFrame()
                 
-            # Invertir el orden para que vaya del más antiguo al más reciente
-            df = df.iloc[::-1].reset_index(drop=True)
-            
-            # Renombrar las columnas de minúsculas a Mayúsculas
+            # Normaliza las columnas para que mantengan compatibilidad con la lógica matemática del RSI y los Soportes
             df = df.rename(columns={
                 'date': 'Date',
                 'open': 'Open',
@@ -181,10 +180,17 @@ class AnalizadorFinanciero:
                 'volume': 'Volume'
             })
             
+            # Asegura que las columnas numéricas sean tratadas como floats
+            for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+                
+            # Asegúrate de que el DataFrame esté ordenado por fecha de forma ascendente (antiguo a reciente)
+            df = df.sort_values('Date').reset_index(drop=True)
+            
             return df.tail(days)
             
         except Exception as e:
-            print(f"Error al obtener precios con FMP: {e}")
+            print(f"Error al obtener precios con Tiingo: {e}")
             return pd.DataFrame()
 
     def identificar_soportes(self, df: pd.DataFrame, window: int = 20) -> list:
