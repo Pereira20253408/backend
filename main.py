@@ -210,23 +210,11 @@ def tarea_vigilancia():
                 "ultima_actualizacion": str(datetime.now())
             })
             
-            # Calcular distancia al soporte
-            if soporte > 0:
-                distancia = (precio_actual - soporte) / soporte
-                
-                # Si está a un 2% o menos del soporte
-                if 0 <= distancia <= 0.02:
-                    mensaje = (
-                        f"🚨 *ALERTA DE COMPRA: {ticker}*\n\n"
-                        f"El precio está en zona de soporte técnico.\n"
-                        f"💰 *Precio Actual:* ${precio_actual:.2f}\n"
-                        f"📉 *Soporte:* ${soporte:.2f} (Distancia: {distancia*100:.2f}%)\n"
-                        f"🎯 *Fair Price (DCF):* ${precio_objetivo:.2f}\n"
-                        f"📊 *RSI:* {rsi}\n\n"
-                        f"La acción está en un punto técnico ideal de entrada."
-                    )
-                    enviar_alerta_telegram(mensaje)
-                    print(f"Alerta enviada para {ticker}")
+            # Comprobar si el precio actual ha bajado o tocado el soporte
+            if soporte > 0 and precio_actual <= soporte:
+                mensaje = f"🚨 *¡Alerta de Finanza!* \nEl ticker *{ticker}* ha tocado o bajado de su soporte.\n*Precio Actual:* ${precio_actual}\n*Soporte:* ${soporte}"
+                enviar_alerta_telegram(mensaje)
+                print(f"Alerta enviada para {ticker}")
 
     except Exception as e:
         print(f"Error en la tarea de vigilancia: {e}")
