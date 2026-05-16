@@ -151,11 +151,17 @@ class AnalizadorFinanciero:
         try:
             url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{ticker.upper()}?apikey={self.api_key}"
             response = requests.get(url)
+            
+            print("--- DEBUG FMP HISTORICO ---")
+            print("Status Code:", response.status_code)
+            print("Keys del JSON:", response.json().keys() if response.status_code == 200 else "No es 200")
+            print("---------------------------")
+            
             response.raise_for_status()
             data = response.json()
             
             if not data or "historical" not in data:
-                print(f"Advertencia: No se encontraron datos históricos de FMP para {ticker.upper()}.")
+                print(f"Advertencia: No se encontraron datos históricos de FMP para {ticker.upper()}. Estructura recibida: {data}")
                 return pd.DataFrame()
                 
             df = pd.DataFrame(data["historical"])
