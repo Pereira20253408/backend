@@ -16,7 +16,7 @@ class AnalizadorFinanciero:
         """
         self.api_key = os.getenv("FMP_API_KEY")
         self.gemini_key = os.getenv("GOOGLE_API_KEY")
-        self.base_url = "https://financialmodelingprep.com/stable"
+        self.base_url = "https://financialmodelingprep.com/api/v3"
         
         if not self.api_key:
             raise ValueError("FMP_API_KEY no está configurada.")
@@ -42,9 +42,8 @@ class AnalizadorFinanciero:
         Returns:
             pd.DataFrame: DataFrame con los Key Metrics.
         """
-        endpoint = f"{self.base_url}/key-metrics"
+        endpoint = f"{self.base_url}/key-metrics/{ticker.upper()}"
         params = {
-            "symbol": ticker.upper(),
             "period": period,
             "limit": limit,
             "apikey": self.api_key
@@ -94,9 +93,8 @@ class AnalizadorFinanciero:
             ratios["Deuda_EBITDA"] = record.get("netDebtToEBITDA")
         
         # Consultar income-statement para los márgenes
-        endpoint_is = f"{self.base_url}/income-statement"
+        endpoint_is = f"{self.base_url}/income-statement/{ticker.upper()}"
         params_is = {
-            "symbol": ticker.upper(),
             "period": "annual",
             "limit": 1,
             "apikey": self.api_key
@@ -124,9 +122,8 @@ class AnalizadorFinanciero:
         """
         Obtiene el cálculo del Valor Intrínseco usando el modelo DCF proporcionado por FMP.
         """
-        endpoint = f"{self.base_url}/discounted-cash-flow"
+        endpoint = f"{self.base_url}/discounted-cash-flow/{ticker.upper()}"
         params = {
-            "symbol": ticker.upper(),
             "apikey": self.api_key
         }
         
@@ -257,9 +254,8 @@ class AnalizadorFinanciero:
         rsi = self.calcular_rsi(df)
         soportes = self.identificar_soportes(df)
         
-        endpoint = f"{self.base_url}/quote"
+        endpoint = f"{self.base_url}/quote/{ticker.upper()}"
         params = {
-            "symbol": ticker.upper(),
             "apikey": self.api_key
         }
         try:
