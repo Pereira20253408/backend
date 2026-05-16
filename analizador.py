@@ -162,11 +162,18 @@ class AnalizadorFinanciero:
             if df.empty:
                 return pd.DataFrame()
                 
-            # Ordenar las fechas de la más antigua a la más reciente
-            df = df.sort_values('date').reset_index(drop=True)
+            # Invertir el orden para que vaya del más antiguo al más reciente
+            df = df.iloc[::-1].reset_index(drop=True)
             
-            # Asegurar que las columnas estén en minúsculas (close, high, low, etc.)
-            df.columns = [c.lower() for c in df.columns]
+            # Renombrar las columnas de minúsculas a Mayúsculas
+            df = df.rename(columns={
+                'date': 'Date',
+                'open': 'Open',
+                'high': 'High',
+                'low': 'Low',
+                'close': 'Close',
+                'volume': 'Volume'
+            })
             
             return df.tail(days)
             
@@ -182,7 +189,7 @@ class AnalizadorFinanciero:
             return []
             
         # Encontrar mínimos locales
-        lows = df["low"].values
+        lows = df["Low"].values
         soportes = []
         
         for i in range(window, len(lows) - window):
@@ -215,7 +222,7 @@ class AnalizadorFinanciero:
         if df.empty or len(df) < period:
             return None
             
-        delta = df["close"].diff()
+        delta = df["Close"].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
         
@@ -250,7 +257,7 @@ class AnalizadorFinanciero:
             precio_actual = data[0]['price']
         except Exception as e:
             print(f"Error al obtener precio actual de FMP para {ticker}: {e}")
-            precio_actual = float(df["close"].iloc[-1])
+            precio_actual = float(df["Close"].iloc[-1])
 
         # Determinar mensaje RSI
         rsi_mensaje = "Neutral"
