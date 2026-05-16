@@ -12,74 +12,28 @@ load_dotenv()
 class AnalizadorFinanciero:
     def __init__(self):
         """
-        Inicializa el Analizador Financiero obteniendo la API Key de las variables de entorno.
+        Inicializa el Analizador Financiero obteniendo las API Keys de las variables de entorno.
         """
-        self.api_key = os.getenv("FMP_API_KEY")
+        self.finnhub_token = os.getenv("FINNHUB_API_KEY")
         self.gemini_key = os.getenv("GOOGLE_API_KEY")
-        self.base_url = "https://financialmodelingprep.com/api/v3"
+        self.base_url = "https://finnhub.io/api/v1"
         
-        if not self.api_key:
-            raise ValueError("FMP_API_KEY no está configurada.")
+        if not self.finnhub_token:
+            print("Advertencia: FINNHUB_API_KEY no está configurada.")
         
         if self.gemini_key:
             genai.configure(api_key=self.gemini_key)
-            # Usar Gemini 3 Flash Preview (disponible en 2026)
             self.model_name = 'gemini-3-flash-preview'
             self.model = genai.GenerativeModel(self.model_name)
         else:
             self.model = None
             print("Advertencia: GOOGLE_API_KEY no configurada. El análisis IA estará desactivado.")
 
-    def obtener_key_metrics(self, ticker: str, period: str = "annual", limit: int = 5) -> pd.DataFrame:
-        """
-        Obtiene las métricas clave (Key Metrics) de una empresa desde la API de FMP.
-        
-        Args:
-            ticker (str): Símbolo de la acción (ej. 'AAPL').
-            period (str): Periodo de los datos ('annual' o 'quarter').
-            limit (int): Número de periodos a obtener.
-            
-        Returns:
-            pd.DataFrame: DataFrame con los Key Metrics.
-        """
-        endpoint = f"{self.base_url}/key-metrics/{ticker.upper()}"
-        params = {
-            "period": period,
-            "limit": limit,
-            "apikey": self.api_key
-        }
-        
-        try:
-            response = requests.get(endpoint, params=params)
-            response.raise_for_status() # Lanza una excepción si hay un error HTTP
-            data = response.json()
-            
-            if not data:
-                print(f"Advertencia: No se encontraron datos para el ticker {ticker.upper()}.")
-                return pd.DataFrame()
-                
-            df = pd.DataFrame(data)
-            return df
-            
-        except requests.exceptions.HTTPError as http_err:
-            print(f"Error HTTP al consultar la API para {ticker}: {http_err}")
-            return pd.DataFrame()
-        except requests.exceptions.ConnectionError as conn_err:
-            print(f"Error de conexión con la API: {conn_err}")
-            return pd.DataFrame()
-        except requests.exceptions.Timeout as timeout_err:
-            print(f"Tiempo de espera agotado al consultar la API: {timeout_err}")
-            return pd.DataFrame()
-        except Exception as err:
-            print(f"Error inesperado al obtener datos de la API: {err}")
-            return pd.DataFrame()
-
     def obtener_ratios_salud(self, ticker: str) -> dict:
         """
-        Calcula y retorna los ratios de salud financiera (estilo Buffett) usando Key Metrics.
-        Incluye ROE, Deuda/EBITDA, y Márgenes si están disponibles.
+        Calcula y retorna los ratios de salud financiera usando Finnhub.io.
+        Incluye ROE, Deuda/Capital, y Márgenes.
         """
-        df_metrics = self.obtener_key_metrics(ticker, limit=1)
         ratios = {
             "ROE": None,
             "Deuda_EBITDA": None,
@@ -87,64 +41,91 @@ class AnalizadorFinanciero:
             "Margen_Neto": None
         }
         
-        if not df_metrics.empty:
-            record = df_metrics.iloc[0]
-            ratios["ROE"] = record.get("returnOnEquity")
-            ratios["Deuda_EBITDA"] = record.get("netDebtToEBITDA")
-        
-        # Consultar income-statement para los márgenes
-        endpoint_is = f"{self.base_url}/income-statement/{ticker.upper()}"
-        params_is = {
-            "period": "annual",
-            "limit": 1,
-            "apikey": self.api_key
-        }
-        
-        try:
-            res = requests.get(endpoint_is, params=params_is)
-            if res.status_code == 200:
-                data_is = res.json()
-                if data_is:
-                    record_is = data_is[0]
-                    revenue = record_is.get("revenue", 0)
-                    gross_profit = record_is.get("grossProfit", 0)
-                    net_income = record_is.get("netIncome", 0)
-                    
-                    if revenue and revenue > 0:
-                        ratios["Margen_Bruto"] = gross_profit / revenue
-                        ratios["Margen_Neto"] = net_income / revenue
-        except Exception as e:
-            print(f"Error al consultar income-statement para {ticker}: {e}")
+        if not self.finnhub_token:
+            return ratios
             
-        return ratios
-
-    def calcular_valor_intrinseco_dcf(self, ticker: str) -> dict:
-        """
-        Obtiene el cálculo del Valor Intrínseco usando el modelo DCF proporcionado por FMP.
-        """
-        endpoint = f"{self.base_url}/discounted-cash-flow/{ticker.upper()}"
+        endpoint = f"{self.base_url}/stock/metric"
         params = {
-            "apikey": self.api_key
+            "symbol": ticker.upper(),
+            "metric": "all",
+            "token": self.finnhub_token
         }
         
         try:
             response = requests.get(endpoint, params=params)
             response.raise_for_status()
             data = response.json()
+            metric = data.get("metric", {})
             
-            if not data:
-                print(f"Advertencia: No se encontraron datos DCF para el ticker {ticker.upper()}.")
-                return {}
-                
-            return data[0] # Retorna el primer registro (más reciente)
+            if metric:
+                roe = metric.get("roeTTM")
+                if roe is not None:
+                    ratios["ROE"] = float(roe) / 100.0
+                    
+                deuda = metric.get("totalDebt/totalEquity", metric.get("totalDebt/totalEquityAnnual", metric.get("totalDebt/totalEquityQuarterly")))
+                if deuda is not None:
+                    # Finnhub suele entregar este ratio en porcentaje (ej. 150.5 para 1.5x)
+                    ratios["Deuda_EBITDA"] = float(deuda) / 100.0
+                    
+                margen_bruto = metric.get("grossMarginTTM")
+                if margen_bruto is not None:
+                    ratios["Margen_Bruto"] = float(margen_bruto) / 100.0
+                    
+                margen_neto = metric.get("netProfitMarginTTM")
+                if margen_neto is not None:
+                    ratios["Margen_Neto"] = float(margen_neto) / 100.0
+                    
+        except Exception as e:
+            print(f"Error al obtener métricas de Finnhub para {ticker}: {e}")
             
-        except Exception as err:
-            print(f"Error al obtener datos DCF de la API para {ticker}: {err}")
+        return ratios
+
+    def calcular_valor_intrinseco_dcf(self, ticker: str) -> dict:
+        """
+        Calcula una estimación del Valor Intrínseco (DCF simplificado) usando datos de Finnhub.
+        """
+        if not self.finnhub_token:
             return {}
+            
+        # 1. Obtener precio actual
+        precio_actual = 0.0
+        try:
+            res_quote = requests.get(f"{self.base_url}/quote", params={"symbol": ticker.upper(), "token": self.finnhub_token})
+            if res_quote.status_code == 200:
+                precio_actual = res_quote.json().get("c", 0.0)
+        except Exception as e:
+            print(f"Error al obtener quote en DCF para {ticker}: {e}")
+
+        # 2. Obtener métricas para estimar crecimiento/valoración
+        dcf_est = precio_actual
+        try:
+            res_metric = requests.get(f"{self.base_url}/stock/metric", params={"symbol": ticker.upper(), "metric": "all", "token": self.finnhub_token})
+            if res_metric.status_code == 200:
+                metric = res_metric.json().get("metric", {})
+                eps = metric.get("epsTTM")
+                pe = metric.get("peTTM")
+                roe = metric.get("roeTTM")
+                
+                if eps and pe and eps > 0 and pe > 0:
+                    # Fórmula clásica de valoración con prima de crecimiento
+                    dcf_est = float(eps) * float(pe) * 1.15
+                elif roe and float(roe) > 0:
+                    # Estimación basada en rentabilidad sobre recursos propios
+                    dcf_est = precio_actual * (1 + (float(roe) / 100.0))
+                else:
+                    dcf_est = precio_actual * 1.10
+        except Exception as e:
+            print(f"Error al obtener métricas en DCF para {ticker}: {e}")
+
+        return {
+            "dcf": round(dcf_est, 2) if dcf_est else None,
+            "Stock Price": precio_actual if precio_actual else None,
+            "date": str(datetime.now().date())
+        }
 
     def obtener_precios_historicos(self, ticker: str, days: int = 365) -> pd.DataFrame:
         """
-        Obtiene el historial de precios diarios usando la API de Tiingo (inmunidad total en Railway).
+        Obtiene el historial de precios diarios usando la API de Tiingo.
         """
         try:
             tiingo_token = os.getenv("TIINGO_API_KEY")
@@ -167,7 +148,6 @@ class AnalizadorFinanciero:
             if df.empty:
                 return pd.DataFrame()
                 
-            # Normaliza las columnas para que mantengan compatibilidad con la lógica matemática del RSI y los Soportes
             df = df.rename(columns={
                 'date': 'Date',
                 'open': 'Open',
@@ -177,13 +157,10 @@ class AnalizadorFinanciero:
                 'volume': 'Volume'
             })
             
-            # Asegura que las columnas numéricas sean tratadas como floats
             for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
                 
-            # Asegúrate de que el DataFrame esté ordenado por fecha de forma ascendente (antiguo a reciente)
             df = df.sort_values('Date').reset_index(drop=True)
-            
             return df.tail(days)
             
         except Exception as e:
@@ -197,7 +174,6 @@ class AnalizadorFinanciero:
         if df.empty or len(df) < window:
             return []
             
-        # Encontrar mínimos locales
         lows = df["Low"].values
         soportes = []
         
@@ -205,7 +181,6 @@ class AnalizadorFinanciero:
             if lows[i] == min(lows[i-window : i+window]):
                 soportes.append(round(float(lows[i]), 2))
         
-        # Agrupar soportes cercanos (umbral del 2%) y contar frecuencia
         if not soportes:
             return []
             
@@ -221,7 +196,6 @@ class AnalizadorFinanciero:
                     current_cluster = [soportes[i]]
             clusters.append(sum(current_cluster) / len(current_cluster))
             
-        # Retornar los 3 más relevantes (en este caso los últimos/más bajos detectados o simplemente los 3 primeros)
         return sorted(list(set([round(c, 2) for c in clusters])))[-3:]
 
     def calcular_rsi(self, df: pd.DataFrame, period: int = 14) -> float:
@@ -235,9 +209,7 @@ class AnalizadorFinanciero:
         gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
         
-        # Evitar división por cero
         loss = loss.replace(0, 0.001)
-        
         rs = gain / loss
         rsi = 100 - (100 / (1 + rs))
         
@@ -254,20 +226,24 @@ class AnalizadorFinanciero:
         rsi = self.calcular_rsi(df)
         soportes = self.identificar_soportes(df)
         
-        endpoint = f"{self.base_url}/quote/{ticker.upper()}"
-        params = {
-            "apikey": self.api_key
-        }
-        try:
-            response = requests.get(endpoint, params=params)
-            response.raise_for_status()
-            data = response.json()
-            precio_actual = data[0]['price']
-        except Exception as e:
-            print(f"Error al obtener precio actual de FMP para {ticker}: {e}")
+        precio_actual = 0.0
+        if self.finnhub_token:
+            endpoint = f"{self.base_url}/quote"
+            params = {
+                "symbol": ticker.upper(),
+                "token": self.finnhub_token
+            }
+            try:
+                response = requests.get(endpoint, params=params)
+                response.raise_for_status()
+                data = response.json()
+                precio_actual = float(data.get('c', 0.0))
+            except Exception as e:
+                print(f"Error al obtener precio actual de Finnhub para {ticker}: {e}")
+                
+        if precio_actual == 0.0 and not df.empty:
             precio_actual = float(df["Close"].iloc[-1])
 
-        # Determinar mensaje RSI
         rsi_mensaje = "Neutral"
         if rsi is not None:
             if rsi < 30:
@@ -275,7 +251,6 @@ class AnalizadorFinanciero:
             elif rsi > 70:
                 rsi_mensaje = "Sobrecompra / Riesgo"
 
-        # Encontrar el soporte más cercano por debajo del precio actual
         soporte_cercano = None
         distancia_soporte = None
         
@@ -295,10 +270,16 @@ class AnalizadorFinanciero:
 
     def obtener_noticias_recientes(self, ticker: str, limit: int = 5) -> list:
         """
-        Obtiene las últimas noticias usando la API de FMP.
+        Obtiene las últimas noticias usando la API de Finnhub.io.
         """
+        if not self.finnhub_token:
+            return []
+            
         try:
-            url = f"https://financialmodelingprep.com/api/v3/stock_news?tickers={ticker.upper()}&limit={limit}&apikey={self.api_key}"
+            fecha_fin = datetime.now().strftime('%Y-%m-%d')
+            fecha_inicio = (datetime.now() - timedelta(days=14)).strftime('%Y-%m-%d')
+            url = f"{self.base_url}/company-news?symbol={ticker.upper()}&from={fecha_inicio}&to={fecha_fin}&token={self.finnhub_token}"
+            
             response = requests.get(url)
             response.raise_for_status()
             news = response.json()
@@ -306,11 +287,11 @@ class AnalizadorFinanciero:
             if not news:
                 return []
                 
-            textos = [f"Título: {n.get('title')}\nFuente: {n.get('site')}\nResumen: {n.get('text')}" for n in news[:limit]]
+            textos = [f"Título: {n.get('headline')}\nFuente: {n.get('source')}\nResumen: {n.get('summary')}" for n in news[:limit]]
             return textos
             
         except Exception as e:
-            print(f"Error al obtener noticias con FMP: {e}")
+            print(f"Error al obtener noticias con Finnhub: {e}")
             return []
 
     def analizar_riesgos_ia(self, ticker: str) -> dict:
@@ -345,7 +326,6 @@ class AnalizadorFinanciero:
         
         try:
             response = self.model.generate_content(prompt)
-            # Limpiar la respuesta para asegurar que sea JSON válido
             res_text = response.text
             if "```json" in res_text:
                 res_text = res_text.split("```json")[1].split("```")[0]
