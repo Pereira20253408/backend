@@ -20,6 +20,8 @@ class WatchlistItem(BaseModel):
     soporte_tecnico: float
     fecha_analisis: str = str(datetime.now().date())
     seguimiento_activo: bool = True
+    precio_actual: float = 0.0
+    rsi: float = 0.0
 
 # Configurar CORS
 app.add_middleware(
@@ -121,7 +123,15 @@ def add_to_watchlist(item: WatchlistItem):
     if not db:
         raise HTTPException(status_code=500, detail="Base de datos no disponible.")
     try:
-        db.collection("watchlist").document(item.ticker.upper()).set(item.dict())
+        item_dict = item.dict()
+        if item.precio_actual == 0.0 or item.rsi == 0.0:
+            if analizador:
+                tecnico = analizador.obtener_analisis_tecnico(item.ticker)
+                if tecnico:
+                    item_dict["precio_actual"] = tecnico.get("precio_actual", item.precio_actual)
+                    item_dict["rsi"] = tecnico.get("rsi", item.rsi)
+                    
+        db.collection("watchlist").document(item.ticker.upper()).set(item_dict)
         return {"message": f"{item.ticker} añadido a la watchlist"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -138,12 +148,12 @@ def get_watchlist():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/watchlist/{ticker}")
-def delete_from_watchlist(ticker: str):
+def eliminar_de_watchlist(ticker: str):
     if not db:
         raise HTTPException(status_code=500, detail="Base de datos no disponible.")
     try:
         db.collection("watchlist").document(ticker.upper()).delete()
-        return {"message": f"{ticker} eliminado de la watchlist"}
+        return {"message": f"{ticker} eliminado exitosamente"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -192,6 +202,13 @@ def tarea_vigilancia():
 
             precio_actual = tecnico["precio_actual"]
             rsi = tecnico["rsi"]
+            
+            # Guardar/Actualizar en Firestore el precio_actual y rsi
+            db.collection("watchlist").document(ticker.upper()).update({
+                "precio_actual": precio_actual,
+                "rsi": rsi,
+                "ultima_actualizacion": str(datetime.now())
+            })
             
             # Calcular distancia al soporte
             if soporte > 0:
