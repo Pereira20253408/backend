@@ -147,6 +147,27 @@ def delete_from_watchlist(ticker: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.patch("/watchlist/{ticker}/toggle")
+def toggle_seguimiento(ticker: str):
+    if not db:
+        raise HTTPException(status_code=500, detail="Base de datos no disponible.")
+    try:
+        doc_ref = db.collection("watchlist").document(ticker.upper())
+        doc = doc_ref.get()
+        if not doc.exists:
+            raise HTTPException(status_code=404, detail="Ticker no encontrado en la watchlist.")
+        
+        data = doc.to_dict()
+        estado_actual = data.get("seguimiento_activo", True)
+        nuevo_estado = not estado_actual
+        
+        doc_ref.update({"seguimiento_activo": nuevo_estado})
+        return {"ticker": ticker.upper(), "seguimiento_activo": nuevo_estado, "message": f"Seguimiento para {ticker.upper()} cambiado a {nuevo_estado}"}
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # --- LÓGICA DEL VIGILANTE ---
 
 def tarea_vigilancia():
