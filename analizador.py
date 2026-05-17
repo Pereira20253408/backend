@@ -167,21 +167,48 @@ class AnalizadorFinanciero:
                 roe = metric.get("roeTTM")
                 market_cap = metric.get("marketCapitalization")
                 
-                # --- CÁLCULO DE WACC DINÁMICO (CAPM) ---
+                # --- CÁLCULO DE WACC REAL Y PRECISO (PONDERADO) ---
                 beta = metric.get("beta")
-                if beta is None:
+                try:
+                    beta = float(beta) if beta is not None else 1.0
+                except (ValueError, TypeError):
                     beta = 1.0
+
+                # 1. Costo del Capital Propio (Cost of Equity usando CAPM)
+                rf = 4.3   # Tasa libre de riesgo (Bono EE.UU. a 10 años ~4.3%)
+                erp = 5.2  # Prima de Riesgo de Mercado (Equity Risk Premium)
+                cost_of_equity = rf + (beta * erp)
+
+                # 2. Extraer Estructura de Capital Real
+                deuda = metric.get("totalDebtAnnual", metric.get("totalDebtQuarterly", metric.get("netDebtAnnual")))
+
+                try:
+                    E = float(market_cap) if market_cap else 0.0  # Valor de mercado del Equity
+                    D = float(deuda) if deuda else 0.0            # Deuda Total
+                except (ValueError, TypeError):
+                    E = 0.0
+                    D = 0.0
+
+                V = E + D  # Valor Total Corporativo
+
+                # 3. Costo de la Deuda (Cost of Debt) y Tasa Impositiva
+                cost_of_debt = rf + 2.0  # Spread estimado para corporativas estables
+                tax_rate = 0.21          # Impuesto corporativo EE.UU. (21%)
+
+                # 4. Fórmula del WACC Ponderada con Escudo Fiscal
+                if V > 0 and E > 0:
+                    peso_equity = E / V
+                    peso_debt = D / V
+                    wacc_calculado = (peso_equity * cost_of_equity) + (peso_debt * cost_of_debt * (1 - tax_rate))
                 else:
-                    try:
-                        beta = float(beta)
-                    except (ValueError, TypeError):
-                        beta = 1.0
-                
-                # Rf = 4.2%, ERP = 5.0%
-                wacc = 4.2 + (beta * 5.0)
-                if wacc < 5.0: wacc = 5.0
-                elif wacc > 15.0: wacc = 15.0
-                wacc_default = round(wacc, 1)
+                    wacc_calculado = cost_of_equity
+
+                # Límites lógicos para evitar distorsiones por volatilidad extrema
+                if wacc_calculado < 5.0: wacc_calculado = 5.0
+                elif wacc_calculado > 18.0: wacc_calculado = 18.0
+
+                wacc_default = round(wacc_calculado, 1)
+                # -------------------------------------------------
 
                 # --- EXTRACCIÓN DE CRECIMIENTO ESTIMADO FUTURO ---
                 growth = metric.get("epsGrowth3Y")
