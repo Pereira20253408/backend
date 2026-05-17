@@ -23,6 +23,10 @@ class WatchlistItem(BaseModel):
     precio_actual: float = 0.0
     rsi: float = 0.0
 
+class ChatMessage(BaseModel):
+    mensaje: str
+    historial: list = []
+
 # Configurar CORS
 app.add_middleware(
     CORSMiddleware,
@@ -75,7 +79,12 @@ def obtener_analisis_completo(ticker: str, periodo: str = '1y'):
             "valor_intrinseco": {
                 "dcf": dcf_data.get("dcf"),
                 "precio_actual": dcf_data.get("Stock Price") or tecnico.get("precio_actual"),
-                "fecha": dcf_data.get("date")
+                "fecha": dcf_data.get("date"),
+                "datos_crudos": dcf_data.get("datos_crudos", {
+                    "flujo_caja": 5000.0,
+                    "deuda_neta": 2000.0,
+                    "acciones_circulacion": 1000.0
+                })
             },
             "analisis_tecnico": tecnico,
             "fecha_consulta": str(datetime.now())
@@ -83,11 +92,13 @@ def obtener_analisis_completo(ticker: str, periodo: str = '1y'):
         
         # Lógica de veredicto
         veredicto = "Esperar"
+        respuesta["valor_intrinseco"]["infravalorada"] = False
         if respuesta["valor_intrinseco"]["dcf"] and respuesta["valor_intrinseco"]["precio_actual"]:
             dcf = respuesta["valor_intrinseco"]["dcf"]
             precio = respuesta["valor_intrinseco"]["precio_actual"]
             margen = (dcf - precio) / dcf
             respuesta["valor_intrinseco"]["margen_seguridad_porcentaje"] = round(margen * 100, 2)
+            respuesta["valor_intrinseco"]["infravalorada"] = precio < dcf
             
             if precio < dcf:
                 if margen >= 0.20: veredicto = "Comprar (Gran Oportunidad)"
@@ -110,6 +121,22 @@ def obtener_analisis_ia(ticker: str):
     
     try:
         resultado = analizador.analizar_riesgos_ia(ticker)
+        if "error" in resultado:
+            raise HTTPException(status_code=400, detail=resultado["error"])
+        return resultado
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/analizar/{ticker}/chat")
+def chatear_con_ia(ticker: str, chat_req: ChatMessage):
+    """
+    Chatbot conversacional libre sobre un ticker.
+    """
+    if not analizador:
+        raise HTTPException(status_code=500, detail="El analizador no está configurado.")
+        
+    try:
+        resultado = analizador.chatear_ia(ticker, chat_req.mensaje, chat_req.historial)
         if "error" in resultado:
             raise HTTPException(status_code=400, detail=resultado["error"])
         return resultado

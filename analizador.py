@@ -98,6 +98,14 @@ class AnalizadorFinanciero:
 
         # 2. Obtener métricas para estimar crecimiento/valoración
         dcf_est = precio_actual
+        eps = None
+        pe = None
+        roe = None
+        market_cap = None
+        acciones_circulacion = 1000.0 # en millones
+        flujo_caja = 5000.0 # en millones
+        deuda_neta = 2000.0 # en millones
+
         try:
             res_metric = requests.get(f"{self.base_url}/stock/metric", params={"symbol": ticker.upper(), "metric": "all", "token": self.finnhub_token})
             if res_metric.status_code == 200:
@@ -105,7 +113,26 @@ class AnalizadorFinanciero:
                 eps = metric.get("epsTTM")
                 pe = metric.get("peTTM")
                 roe = metric.get("roeTTM")
-                
+                market_cap = metric.get("marketCapitalization")
+
+                if market_cap and precio_actual > 0:
+                    acciones_circulacion = float(market_cap) / precio_actual
+                elif metric.get("sharesOutstanding"):
+                    acciones_circulacion = float(metric.get("sharesOutstanding"))
+
+                if eps and acciones_circulacion:
+                    flujo_caja = float(eps) * acciones_circulacion
+                elif metric.get("freeCashFlowAnnual"):
+                    flujo_caja = float(metric.get("freeCashFlowAnnual"))
+                elif metric.get("netIncomeTTM"):
+                    flujo_caja = float(metric.get("netIncomeTTM"))
+
+                deuda = metric.get("totalDebtAnnual", metric.get("totalDebtQuarterly", metric.get("netDebtAnnual")))
+                if deuda is not None:
+                    deuda_neta = float(deuda)
+                elif market_cap:
+                    deuda_neta = float(market_cap) * 0.15
+
                 if eps and pe and eps > 0 and pe > 0:
                     # Fórmula clásica de valoración con prima de crecimiento
                     dcf_est = float(eps) * float(pe) * 1.15
@@ -120,7 +147,12 @@ class AnalizadorFinanciero:
         return {
             "dcf": round(dcf_est, 2) if dcf_est else None,
             "Stock Price": precio_actual if precio_actual else None,
-            "date": str(datetime.now().date())
+            "date": str(datetime.now().date()),
+            "datos_crudos": {
+                "flujo_caja": round(flujo_caja, 2),
+                "deuda_neta": round(deuda_neta, 2),
+                "acciones_circulacion": round(acciones_circulacion, 2)
+            }
         }
 
     def obtener_precios_historicos(self, ticker: str, periodo: str = '1y') -> pd.DataFrame:
@@ -360,6 +392,49 @@ class AnalizadorFinanciero:
         except Exception as e:
             print(f"Error en análisis IA: {e}")
             return {"error": "Error procesando el análisis con la IA."}
+
+    def chatear_ia(self, ticker: str, mensaje: str, historial: list = []) -> dict:
+        """
+        Chatbot conversacional libre sobre un ticker, inyectando datos fundamentales y técnicos.
+        """
+        if not self.model:
+            return {"respuesta": "IA no configurada (falta GOOGLE_API_KEY en el backend)."}
+            
+        ratios = self.obtener_ratios_salud(ticker)
+        dcf_data = self.calcular_valor_intrinseco_dcf(ticker)
+        tecnico = self.obtener_analisis_tecnico(ticker)
+
+        historial_str = ""
+        if historial:
+            historial_str = "\n".join([f"{h.get('role', 'Usuario')}: {h.get('content', '')}" for h in historial])
+
+        contexto = f"""
+        Estás actuando como un Asistente Financiero Experto de la plataforma Quantix.
+        Aquí tienes los datos actuales en tiempo real del ticker {ticker.upper()}:
+        
+        - Precio Actual: ${dcf_data.get('Stock Price') or tecnico.get('precio_actual', 'N/A')}
+        - Valor Intrínseco Estimado (DCF): ${dcf_data.get('dcf', 'N/A')}
+        - ROE: {ratios.get('ROE', 'N/A')}
+        - Margen Bruto: {ratios.get('Margen_Bruto', 'N/A')}
+        - Margen Neto: {ratios.get('Margen_Neto', 'N/A')}
+        - Deuda/EBITDA: {ratios.get('Deuda_EBITDA', 'N/A')}
+        - RSI (14 días): {tecnico.get('rsi', 'N/A')} ({tecnico.get('rsi_mensaje', 'N/A')})
+        - Soporte Técnico Cercano: ${tecnico.get('soporte_cercano', 'N/A')}
+        
+        Historial de la conversación previa:
+        {historial_str}
+        
+        Pregunta del usuario: {mensaje}
+        
+        Responde de forma profesional, clara, concisa y directa a la pregunta del usuario utilizando este contexto financiero y tu conocimiento general sobre {ticker.upper()}.
+        """
+
+        try:
+            response = self.model.generate_content(contexto)
+            return {"respuesta": response.text}
+        except Exception as e:
+            print(f"Error en chatear_ia: {e}")
+            return {"respuesta": "Lo siento, ha ocurrido un error al generar la respuesta de la IA."}
 
 # Ejemplo de prueba local
 if __name__ == "__main__":
