@@ -123,7 +123,7 @@ class AnalizadorFinanciero:
             "date": str(datetime.now().date())
         }
 
-    def obtener_precios_historicos(self, ticker: str, days: int = 365) -> pd.DataFrame:
+    def obtener_precios_historicos(self, ticker: str, periodo: str = '1y') -> pd.DataFrame:
         """
         Obtiene el historial de precios diarios usando la API de Tiingo.
         """
@@ -133,7 +133,19 @@ class AnalizadorFinanciero:
                 print("Advertencia: TIINGO_API_KEY no está configurada.")
                 return pd.DataFrame()
                 
-            fecha_inicio = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
+            dias = 365
+            if periodo == '1y':
+                dias = 365
+            elif periodo == '2y':
+                dias = 730
+            elif periodo == '3y':
+                dias = 1095
+            elif periodo == '5y':
+                dias = 1825
+            elif periodo == '10y':
+                dias = 3650
+                
+            fecha_inicio = (datetime.now() - timedelta(days=dias)).strftime('%Y-%m-%d')
             url = f"https://api.tiingo.com/tiingo/daily/{ticker.lower()}/prices?startDate={fecha_inicio}&token={tiingo_token}"
             
             response = requests.get(url)
@@ -161,7 +173,7 @@ class AnalizadorFinanciero:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
                 
             df = df.sort_values('Date').reset_index(drop=True)
-            return df.tail(days)
+            return df.tail(dias)
             
         except Exception as e:
             print(f"Error al obtener precios con Tiingo: {e}")
@@ -215,11 +227,11 @@ class AnalizadorFinanciero:
         
         return round(float(rsi.iloc[-1]), 2)
 
-    def obtener_analisis_tecnico(self, ticker: str) -> dict:
+    def obtener_analisis_tecnico(self, ticker: str, periodo: str = '1y') -> dict:
         """
         Realiza un análisis técnico simplificado: RSI y Soportes.
         """
-        df = self.obtener_precios_historicos(ticker)
+        df = self.obtener_precios_historicos(ticker, periodo=periodo)
         if df.empty:
             return {}
 
@@ -265,6 +277,9 @@ class AnalizadorFinanciero:
                 fecha_str = str(row['Date']).split('T')[0].split(' ')[0]
                 historico.append({
                     "date": fecha_str,
+                    "open": round(float(row['Open']), 2),
+                    "high": round(float(row['High']), 2),
+                    "low": round(float(row['Low']), 2),
                     "close": round(float(row['Close']), 2)
                 })
 

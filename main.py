@@ -46,7 +46,7 @@ def read_root():
     return {"status": "ok", "message": "Bienvenido a la API de Finanza"}
 
 @app.get("/analizar/{ticker}")
-def obtener_analisis_completo(ticker: str):
+def obtener_analisis_completo(ticker: str, periodo: str = '1y'):
     """
     Análisis financiero completo: Health, DCF y Technical.
     """
@@ -59,7 +59,7 @@ def obtener_analisis_completo(ticker: str):
         dcf_data = analizador.calcular_valor_intrinseco_dcf(ticker)
         
         # 2. Técnico
-        tecnico = analizador.obtener_analisis_tecnico(ticker)
+        tecnico = analizador.obtener_analisis_tecnico(ticker, periodo)
 
         if not ratios and not dcf_data and not tecnico:
             raise HTTPException(status_code=404, detail="Ticker no encontrado.")
