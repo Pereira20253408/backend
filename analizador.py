@@ -131,7 +131,10 @@ class AnalizadorFinanciero:
         Calcula una estimación del Valor Intrínseco (DCF simplificado) usando datos de Finnhub.
         """
         if not self.finnhub_token:
-            return {}
+            return {
+                "wacc_default": 9.5,
+                "growth_default": 10.0
+            }
             
         # 1. Obtener precio actual
         precio_actual = 0.0
@@ -151,6 +154,9 @@ class AnalizadorFinanciero:
         acciones_circulacion = 1000.0 # en millones
         flujo_caja = 5000.0 # en millones
         deuda_neta = 2000.0 # en millones
+        
+        wacc_default = 9.5
+        growth_default = 10.0
 
         try:
             res_metric = requests.get(f"{self.base_url}/stock/metric", params={"symbol": ticker.upper(), "metric": "all", "token": self.finnhub_token})
@@ -160,6 +166,39 @@ class AnalizadorFinanciero:
                 pe = metric.get("peTTM")
                 roe = metric.get("roeTTM")
                 market_cap = metric.get("marketCapitalization")
+                
+                # --- CÁLCULO DE WACC DINÁMICO (CAPM) ---
+                beta = metric.get("beta")
+                if beta is None:
+                    beta = 1.0
+                else:
+                    try:
+                        beta = float(beta)
+                    except (ValueError, TypeError):
+                        beta = 1.0
+                
+                # Rf = 4.2%, ERP = 5.0%
+                wacc = 4.2 + (beta * 5.0)
+                if wacc < 5.0: wacc = 5.0
+                elif wacc > 15.0: wacc = 15.0
+                wacc_default = round(wacc, 1)
+
+                # --- EXTRACCIÓN DE CRECIMIENTO ESTIMADO FUTURO ---
+                growth = metric.get("epsGrowth3Y")
+                if growth is None:
+                    growth = metric.get("epsGrowth5Y")
+                if growth is None:
+                    growth = metric.get("revenueGrowth5Y")
+                
+                if growth is not None:
+                    try:
+                        growth = float(growth)
+                        if growth < 1.0: growth = 5.0
+                        elif growth > 25.0: growth = 25.0
+                        growth_default = round(growth, 1)
+                    except (ValueError, TypeError):
+                        growth_default = 10.0
+                # -------------------------------------------------
 
                 if market_cap and precio_actual > 0:
                     acciones_circulacion = float(market_cap) / precio_actual
@@ -198,7 +237,9 @@ class AnalizadorFinanciero:
                 "flujo_caja": round(flujo_caja, 2),
                 "deuda_neta": round(deuda_neta, 2),
                 "acciones_circulacion": round(acciones_circulacion, 2)
-            }
+            },
+            "wacc_default": wacc_default,
+            "growth_default": growth_default
         }
 
     def obtener_precios_historicos(self, ticker: str, periodo: str = '1y') -> pd.DataFrame:

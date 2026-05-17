@@ -89,7 +89,9 @@ def obtener_analisis_completo(ticker: str, periodo: str = '1y'):
                 })
             },
             "analisis_tecnico": tecnico,
-            "fecha_consulta": str(datetime.now())
+            "fecha_consulta": str(datetime.now()),
+            "wacc_default": dcf_data.get("wacc_default", 9.5),
+            "growth_default": dcf_data.get("growth_default", 10.0)
         }
         
         # Lógica de veredicto
