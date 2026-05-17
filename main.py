@@ -68,6 +68,9 @@ def obtener_analisis_completo(ticker: str, periodo: str = '1y'):
         if not ratios and not dcf_data and not tecnico:
             raise HTTPException(status_code=404, detail="Ticker no encontrado.")
 
+        precio_actual = dcf_data.get("Stock Price") or tecnico.get("precio_actual", 0.0)
+        analistas_targets = analizador.obtener_precios_objetivo(ticker, precio_actual=precio_actual)
+
         respuesta = {
             "ticker": ticker.upper(),
             "ratios_salud": {
@@ -80,7 +83,7 @@ def obtener_analisis_completo(ticker: str, periodo: str = '1y'):
             "salud_score": ratios.get("salud_score", 85),
             "valor_intrinseco": {
                 "dcf": dcf_data.get("dcf"),
-                "precio_actual": dcf_data.get("Stock Price") or tecnico.get("precio_actual"),
+                "precio_actual": precio_actual,
                 "fecha": dcf_data.get("date"),
                 "datos_crudos": dcf_data.get("datos_crudos", {
                     "flujo_caja": 5000.0,
@@ -91,7 +94,8 @@ def obtener_analisis_completo(ticker: str, periodo: str = '1y'):
             "analisis_tecnico": tecnico,
             "fecha_consulta": str(datetime.now()),
             "wacc_default": dcf_data.get("wacc_default", 9.5),
-            "growth_default": dcf_data.get("growth_default", 10.0)
+            "growth_default": dcf_data.get("growth_default", 10.0),
+            "analistas_targets": analistas_targets
         }
         
         # Lógica de veredicto

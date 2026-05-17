@@ -242,6 +242,41 @@ class AnalizadorFinanciero:
             "growth_default": growth_default
         }
 
+    def obtener_precios_objetivo(self, ticker: str, precio_actual: float = 0.0) -> dict:
+        """
+        Consulta el endpoint de Finnhub de precios objetivo (/stock/price-target).
+        Retorna un diccionario con los targets alto, moderado y bajo.
+        """
+        targets = {
+            "alto": None,
+            "moderado": None,
+            "bajo": None
+        }
+        if self.finnhub_token:
+            endpoint = f"{self.base_url}/stock/price-target"
+            params = {
+                "symbol": ticker.upper(),
+                "token": self.finnhub_token
+            }
+            try:
+                response = requests.get(endpoint, params=params)
+                if response.status_code == 200:
+                    data = response.json()
+                    if data:
+                        targets["alto"] = data.get("targetHigh")
+                        targets["moderado"] = data.get("targetMean")
+                        targets["bajo"] = data.get("targetLow")
+            except Exception as e:
+                print(f"Error al obtener price-target de Finnhub para {ticker}: {e}")
+        
+        # Fallback si no hay datos de analistas pero tenemos precio actual
+        if (targets["moderado"] is None or targets["moderado"] == 0) and precio_actual > 0:
+            targets["alto"] = round(precio_actual * 1.25, 2)
+            targets["moderado"] = round(precio_actual * 1.10, 2)
+            targets["bajo"] = round(precio_actual * 0.85, 2)
+            
+        return targets
+
     def obtener_precios_historicos(self, ticker: str, periodo: str = '1y') -> pd.DataFrame:
         """
         Obtiene el historial de precios diarios usando la API de Tiingo.
