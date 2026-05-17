@@ -31,8 +31,8 @@ class AnalizadorFinanciero:
 
     def obtener_ratios_salud(self, ticker: str) -> dict:
         """
-        Calcula y retorna los ratios de salud financiera usando Finnhub.io.
-        Incluye ROE, Deuda/Capital, y Márgenes.
+        Calcula y retorna los ratios de salud financiera usando datos reales de yfinance.
+        Incluye ROE, Deuda/Capital (o Deuda/EBITDA), y Márgenes.
         """
         ratios = {
             "ROE": None,
@@ -41,42 +41,42 @@ class AnalizadorFinanciero:
             "Margen_Neto": None
         }
         
-        if not self.finnhub_token:
-            return ratios
-            
-        endpoint = f"{self.base_url}/stock/metric"
-        params = {
-            "symbol": ticker.upper(),
-            "metric": "all",
-            "token": self.finnhub_token
-        }
-        
+        yf_ticker = yf.Ticker(ticker.upper())
         try:
-            response = requests.get(endpoint, params=params)
-            response.raise_for_status()
-            data = response.json()
-            metric = data.get("metric", {})
-            
-            if metric:
-                roe = metric.get("roeTTM")
+            info = yf_ticker.info
+            if info:
+                # 1. ROE (returnOnEquity)
+                roe = info.get("returnOnEquity")
                 if roe is not None:
-                    ratios["ROE"] = float(roe) / 100.0
+                    # yfinance suele entregar esto en decimal (ej. 0.25 para 25%)
+                    val = float(roe)
+                    ratios["ROE"] = val / 100.0 if val > 1.0 else val
                     
-                deuda = metric.get("totalDebt/totalEquity", metric.get("totalDebt/totalEquityAnnual", metric.get("totalDebt/totalEquityQuarterly")))
-                if deuda is not None:
-                    # Finnhub suele entregar este ratio en porcentaje (ej. 150.5 para 1.5x)
-                    ratios["Deuda_EBITDA"] = float(deuda) / 100.0
-                    
-                margen_bruto = metric.get("grossMarginTTM")
+                # 2. Deuda_EBITDA o Deuda/Equity
+                deuda_ebitda = info.get("debtToEquity")
+                if deuda_ebitda is not None:
+                    # yfinance suele entregar debtToEquity en porcentaje (ej. 150 para 1.5x)
+                    ratios["Deuda_EBITDA"] = float(deuda_ebitda) / 100.0
+                else:
+                    total_debt = info.get("totalDebt")
+                    ebitda = info.get("ebitda")
+                    if total_debt is not None and ebitda is not None and float(ebitda) > 0:
+                        ratios["Deuda_EBITDA"] = float(total_debt) / float(ebitda)
+                        
+                # 3. Margen Bruto (grossMargins)
+                margen_bruto = info.get("grossMargins")
                 if margen_bruto is not None:
-                    ratios["Margen_Bruto"] = float(margen_bruto) / 100.0
+                    val = float(margen_bruto)
+                    ratios["Margen_Bruto"] = val / 100.0 if val > 1.0 else val
                     
-                margen_neto = metric.get("netProfitMarginTTM")
+                # 4. Margen Neto (profitMargins)
+                margen_neto = info.get("profitMargins")
                 if margen_neto is not None:
-                    ratios["Margen_Neto"] = float(margen_neto) / 100.0
+                    val = float(margen_neto)
+                    ratios["Margen_Neto"] = val / 100.0 if val > 1.0 else val
                     
         except Exception as e:
-            print(f"Error al obtener métricas de Finnhub para {ticker}: {e}")
+            print(f"Error al obtener métricas de yfinance para {ticker}: {e}")
             
         ratios["salud_score"] = self.calcular_puntaje_salud(ratios)
         return ratios
