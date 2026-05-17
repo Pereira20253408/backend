@@ -4,7 +4,7 @@ import pandas as pd
 from dotenv import load_dotenv
 import google.generativeai as genai
 from datetime import datetime, timedelta
-
+import yfinance as yf
 
 # Cargar variables de entorno desde el archivo .env
 load_dotenv()
@@ -128,183 +128,184 @@ class AnalizadorFinanciero:
 
     def calcular_valor_intrinseco_dcf(self, ticker: str) -> dict:
         """
-        Calcula una estimación del Valor Intrínseco (DCF simplificado) usando datos de Finnhub.
+        Calcula una estimación del Valor Intrínseco (DCF de 2 etapas) usando datos reales de yfinance.
         """
-        if not self.finnhub_token:
-            return {
-                "wacc_default": 9.5,
-                "growth_default": 10.0
-            }
-            
-        # 1. Obtener precio actual
-        precio_actual = 0.0
+        yf_ticker = yf.Ticker(ticker.upper())
+        info = {}
         try:
-            res_quote = requests.get(f"{self.base_url}/quote", params={"symbol": ticker.upper(), "token": self.finnhub_token})
-            if res_quote.status_code == 200:
-                precio_actual = res_quote.json().get("c", 0.0)
+            info = yf_ticker.info
         except Exception as e:
-            print(f"Error al obtener quote en DCF para {ticker}: {e}")
+            print(f"Error al obtener info de yfinance para {ticker}: {e}")
 
-        # 2. Obtener métricas para estimar crecimiento/valoración
-        dcf_est = precio_actual
-        eps = None
-        pe = None
-        roe = None
-        market_cap = None
-        acciones_circulacion = 1000.0 # en millones
-        flujo_caja = 5000.0 # en millones
-        deuda_neta = 2000.0 # en millones
+        # 1. Obtener precio actual y Market Cap
+        precio_actual = info.get("currentPrice", info.get("regularMarketPrice", 0.0))
+        if precio_actual == 0.0:
+            # Fallback a Finnhub si yfinance no tiene el precio actual en info
+            if self.finnhub_token:
+                try:
+                    res_quote = requests.get(f"{self.base_url}/quote", params={"symbol": ticker.upper(), "token": self.finnhub_token})
+                    if res_quote.status_code == 200:
+                        precio_actual = res_quote.json().get("c", 0.0)
+                except Exception as e:
+                    print(f"Error al obtener quote de Finnhub en DCF para {ticker}: {e}")
+
+        market_cap = info.get("marketCap")
+        try:
+            E = float(market_cap) if market_cap else 0.0
+        except (ValueError, TypeError):
+            E = 0.0
+
+        # 2. Beta
+        beta = info.get("beta")
+        try:
+            beta = float(beta) if beta is not None else 1.0
+        except (ValueError, TypeError):
+            beta = 1.0
+
+        # 3. Deuda Total (D) con balances de yfinance como fallback
+        D = 0.0
+        try:
+            deuda_info = info.get('totalDebt')
+            if deuda_info is not None:
+                D = float(deuda_info)
+            else:
+                bs = yf_ticker.balance_sheet
+                if not bs.empty:
+                    if 'Total Debt' in bs.index:
+                        D = float(bs.loc['Total Debt'].iloc[0])
+                    elif 'Long Term Debt' in bs.index and 'Short Term Debt' in bs.index:
+                        D = float(bs.loc['Long Term Debt'].iloc[0]) + float(bs.loc['Short Term Debt'].iloc[0])
+                    elif 'Long Term Debt' in bs.index:
+                        D = float(bs.loc['Long Term Debt'].iloc[0])
+        except Exception as e:
+            print(f"Error al extraer Deuda de yfinance para {ticker}: {e}")
         
-        wacc_default = 9.5
-        growth_default = 10.0
+        if D == 0.0 and E > 0:
+            D = E * 0.15
 
+        # 4. Flujo de Caja Libre (FCF)
+        flujo_caja_total = 0.0
         try:
-            res_metric = requests.get(f"{self.base_url}/stock/metric", params={"symbol": ticker.upper(), "metric": "all", "token": self.finnhub_token})
-            if res_metric.status_code == 200:
-                metric = res_metric.json().get("metric", {})
-                eps = metric.get("epsTTM")
-                pe = metric.get("peTTM")
-                roe = metric.get("roeTTM")
-                market_cap = metric.get("marketCapitalization")
-                
-                # --- CÁLCULO DE WACC REAL Y PRECISO (PONDERADO) ---
-                beta = metric.get("beta")
-                try:
-                    beta = float(beta) if beta is not None else 1.0
-                except (ValueError, TypeError):
-                    beta = 1.0
-
-                # 1. Costo del Capital Propio (Cost of Equity usando CAPM)
-                rf = 4.3   
-                erp = 5.2  
-                cost_of_equity = rf + (beta * erp)
-
-                # 2. Extraer Capital (Equity)
-                try:
-                    E = float(market_cap) if market_cap else 0.0
-                except (ValueError, TypeError):
-                    E = 0.0
-
-                # 3. Extraer Deuda (Con ingeniería inversa si la API la oculta)
-                deuda_cruda = metric.get("totalDebtAnnual", metric.get("totalDebtQuarterly", metric.get("netDebtAnnual")))
-                D = float(deuda_cruda) if deuda_cruda else 0.0
-                
-                if D == 0.0 and E > 0:
-                    # Buscamos el ratio Deuda/Capital que Finnhub sí entrega gratis
-                    ratio_de = metric.get("totalDebt/totalEquity", metric.get("totalDebt/totalEquityAnnual"))
-                    if ratio_de:
-                        # Finnhub entrega esto como porcentaje (ej. 150 para 1.5)
-                        D = E * (float(ratio_de) / 100.0)
-                    else:
-                        # Último recurso salvavidas: Promedio de deuda corporativa (15%)
-                        D = E * 0.15
-                
-                V = E + D  
-
-                # 4. Costo de la Deuda y Tasa Impositiva
-                cost_of_debt = rf + 2.0  
-                tax_rate = 0.21          
-
-                # 5. Fórmula del WACC
-                if V > 0 and E > 0:
-                    peso_equity = E / V
-                    peso_debt = D / V
-                    wacc_calculado = (peso_equity * cost_of_equity) + (peso_debt * cost_of_debt * (1 - tax_rate))
-                else:
-                    wacc_calculado = cost_of_equity
-
-                # Límites lógicos 
-                if wacc_calculado < 5.0: wacc_calculado = 5.0
-                elif wacc_calculado > 18.0: wacc_calculado = 18.0
-
-                wacc_default = round(wacc_calculado, 1)
-                
-                # --- DEBUG WACC ---
-                # print(f"\n--- DEBUG WACC para {ticker.upper()} ---")
-                # print(f"Market Cap (E): {E:.2f}")
-                # print(f"Deuda (D) Calculada: {D:.2f}")
-                # if V > 0:
-                #     print(f"Peso Equity: {(E/V)*100:.2f}%")
-                #     print(f"Peso Deuda: {(D/V)*100:.2f}%")
-                # print(f"Costo de Equity: {cost_of_equity:.2f}%")
-                # print(f"Costo de Deuda (neto): {(cost_of_debt * (1 - tax_rate)):.2f}%")
-                # print(f"WACC Final: {wacc_calculado:.2f}%")
-                # print("--------------------------------\n")
-                # -------------------------------------------------
-
-                # --- EXTRACCIÓN DE CRECIMIENTO ESTIMADO FUTURO ---
-                growth = metric.get("epsGrowth3Y", metric.get("epsGrowth5Y", metric.get("revenueGrowth5Y")))
-                try:
-                    growth = float(growth) if growth is not None else 10.0
-                    if growth < 2.0: growth = 2.0
-                    elif growth > 20.0: growth = 20.0
-                except (ValueError, TypeError):
-                    growth = 10.0
-                growth_default = round(growth, 1)
-
-                # --- EXTRACCIÓN DE FLUJO DE CAJA (FCF) ---
-                flujo_caja_total = metric.get("freeCashFlowAnnual", metric.get("netIncomeTTM"))
-                try:
-                    flujo_caja_total = float(flujo_caja_total) if flujo_caja_total else 0.0
-                except (ValueError, TypeError):
-                    flujo_caja_total = 0.0
-
-                flujo_caja = flujo_caja_total
-                deuda_neta = D
-
-                # --- CÁLCULO REAL DEL DCF (2 ETAPAS) ---
-                if flujo_caja_total > 0 and wacc_calculado > 0 and E > 0:
-                    wacc_decimal = wacc_calculado / 100.0
-                    growth_decimal = growth_default / 100.0
-                    tasa_terminal = 0.025  # Crecimiento a perpetuidad (2.5%)
-                    
-                    valor_presente_flujos = 0.0
-                    flujo_proyectado = flujo_caja_total
-                    
-                    # 1. Proyectar y descontar flujos (Años 1-5)
-                    for año in range(1, 6):
-                        flujo_proyectado *= (1 + growth_decimal)
-                        valor_descontado = flujo_proyectado / ((1 + wacc_decimal) ** año)
-                        valor_presente_flujos += valor_descontado
-                    
-                    # 2. Valor Terminal (Gordon Growth Model)
-                    flujo_año_5 = flujo_proyectado
-                    flujo_terminal = flujo_año_5 * (1 + tasa_terminal)
-                    
-                    if wacc_decimal > tasa_terminal:
-                        valor_terminal = flujo_terminal / (wacc_decimal - tasa_terminal)
-                        vp_valor_terminal = valor_terminal / ((1 + wacc_decimal) ** 5)
-                    else:
-                        vp_valor_terminal = 0.0
-                    
-                    # 3. Enterprise Value
-                    enterprise_value = valor_presente_flujos + vp_valor_terminal
-                    
-                    # 4. Equity Value (EV - Deuda)
-                    valor_intrinseco_total = enterprise_value - D
-                    
-                    # 5. Valor por Acción
-                    acciones_circulacion = E / precio_actual if precio_actual > 0 else 1.0
-                    if acciones_circulacion > 0:
-                        dcf_est = valor_intrinseco_total / acciones_circulacion
-                    else:
-                        dcf_est = None
-                else:
-                    dcf_est = None
-                    
-                if dcf_est is not None and dcf_est < 0:
-                    dcf_est = None
-
+            fcf_info = info.get('freeCashFlow')
+            if fcf_info is not None and float(fcf_info) != 0.0:
+                flujo_caja_total = float(fcf_info)
+            else:
+                cf = yf_ticker.cashflow
+                if not cf.empty:
+                    if 'Free Cash Flow' in cf.index:
+                        flujo_caja_total = float(cf.loc['Free Cash Flow'].iloc[0])
+                    elif 'Operating Cash Flow' in cf.index and 'Capital Expenditures' in cf.index:
+                        ocf = float(cf.loc['Operating Cash Flow'].iloc[0])
+                        capex = float(cf.loc['Capital Expenditures'].iloc[0])
+                        flujo_caja_total = ocf - abs(capex)
+                    elif 'Operating Cash Flow' in cf.index:
+                        flujo_caja_total = float(cf.loc['Operating Cash Flow'].iloc[0]) * 0.8
         except Exception as e:
-            print(f"Error al obtener métricas en DCF para {ticker}: {e}")
+            print(f"Error al extraer FCF de yfinance para {ticker}: {e}")
+
+        # 5. Crecimiento Estimado Futuro
+        growth = info.get("earningsGrowth", info.get("revenueGrowth"))
+        try:
+            if growth is not None:
+                growth = float(growth) * 100.0 if float(growth) < 1.0 else float(growth)
+            else:
+                growth = 10.0
+            if growth < 2.0: growth = 2.0
+            elif growth > 20.0: growth = 20.0
+        except (ValueError, TypeError):
+            growth = 10.0
+        growth_default = round(growth, 1)
+
+        # 6. Acciones en Circulación
+        acciones_circulacion = info.get("sharesOutstanding")
+        try:
+            acciones_circulacion = float(acciones_circulacion) if acciones_circulacion else (E / precio_actual if precio_actual > 0 else 1000.0)
+        except (ValueError, TypeError):
+            acciones_circulacion = E / precio_actual if precio_actual > 0 else 1000.0
+
+        # --- CÁLCULO DE WACC REAL Y PRECISO (PONDERADO) ---
+        rf = 4.3   
+        erp = 5.2  
+        cost_of_equity = rf + (beta * erp)
+        
+        V = E + D
+        cost_of_debt = rf + 2.0  
+        tax_rate = 0.21          
+
+        if V > 0 and E > 0:
+            peso_equity = E / V
+            peso_debt = D / V
+            wacc_calculado = (peso_equity * cost_of_equity) + (peso_debt * cost_of_debt * (1 - tax_rate))
+        else:
+            wacc_calculado = cost_of_equity
+
+        if wacc_calculado < 5.0: wacc_calculado = 5.0
+        elif wacc_calculado > 18.0: wacc_calculado = 18.0
+
+        wacc_default = round(wacc_calculado, 1)
+        
+        # --- DEBUG WACC ---
+        print(f"\n--- DEBUG WACC (yfinance) para {ticker.upper()} ---")
+        print(f"Market Cap (E): {E:.2f}")
+        print(f"Deuda (D) Calculada: {D:.2f}")
+        if V > 0:
+            print(f"Peso Equity: {(E/V)*100:.2f}%")
+            print(f"Peso Deuda: {(D/V)*100:.2f}%")
+        print(f"Costo de Equity: {cost_of_equity:.2f}%")
+        print(f"Costo de Deuda (neto): {(cost_of_debt * (1 - tax_rate)):.2f}%")
+        print(f"WACC Final: {wacc_calculado:.2f}%")
+        print("--------------------------------\n")
+
+        # --- CÁLCULO REAL DEL DCF (2 ETAPAS) ---
+        dcf_est = None
+        if flujo_caja_total > 0 and wacc_calculado > 0 and E > 0:
+            wacc_decimal = wacc_calculado / 100.0
+            growth_decimal = growth_default / 100.0
+            tasa_terminal = 0.025  # Crecimiento a perpetuidad (2.5%)
+            
+            valor_presente_flujos = 0.0
+            flujo_proyectado = flujo_caja_total
+            
+            # 1. Proyectar y descontar flujos (Años 1-5)
+            for año in range(1, 6):
+                flujo_proyectado *= (1 + growth_decimal)
+                valor_descontado = flujo_proyectado / ((1 + wacc_decimal) ** año)
+                valor_presente_flujos += valor_descontado
+            
+            # 2. Valor Terminal (Gordon Growth Model)
+            flujo_año_5 = flujo_proyectado
+            flujo_terminal = flujo_año_5 * (1 + tasa_terminal)
+            
+            if wacc_decimal > tasa_terminal:
+                valor_terminal = flujo_terminal / (wacc_decimal - tasa_terminal)
+                vp_valor_terminal = valor_terminal / ((1 + wacc_decimal) ** 5)
+            else:
+                vp_valor_terminal = 0.0
+            
+            # 3. Enterprise Value
+            enterprise_value = valor_presente_flujos + vp_valor_terminal
+            
+            # 4. Equity Value (EV - Deuda)
+            valor_intrinseco_total = enterprise_value - D
+            
+            # 5. Valor por Acción
+            if acciones_circulacion > 0:
+                dcf_est = valor_intrinseco_total / acciones_circulacion
+            else:
+                dcf_est = None
+        else:
+            dcf_est = None
+            
+        if dcf_est is not None and dcf_est < 0:
+            dcf_est = None
 
         return {
             "dcf": round(dcf_est, 2) if dcf_est else None,
             "Stock Price": precio_actual if precio_actual else None,
             "date": str(datetime.now().date()),
             "datos_crudos": {
-                "flujo_caja": round(flujo_caja, 2),
-                "deuda_neta": round(deuda_neta, 2),
+                "flujo_caja": round(flujo_caja_total, 2),
+                "deuda_neta": round(D, 2),
                 "acciones_circulacion": round(acciones_circulacion, 2)
             },
             "wacc_default": wacc_default,
@@ -632,7 +633,7 @@ if __name__ == "__main__":
     try:
         print("Iniciando Analizador Financiero...")
         analizador = AnalizadorFinanciero()
-        ticker = "AAPL"
+        ticker = "AMD"
         
         print(f"\n--- ANÁLISIS TÉCNICO DE {ticker} ---")
         tecnico = analizador.obtener_analisis_tecnico(ticker)
