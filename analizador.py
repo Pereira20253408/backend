@@ -13,13 +13,9 @@ class AnalizadorFinanciero:
     def __init__(self):
         """
         Inicializa el Analizador Financiero obteniendo las API Keys de las variables de entorno.
+        Orientado a entorno 100% local con yfinance y Tiingo.
         """
-        self.finnhub_token = os.getenv("FINNHUB_API_KEY")
         self.gemini_key = os.getenv("GOOGLE_API_KEY")
-        self.base_url = "https://finnhub.io/api/v1"
-        
-        if not self.finnhub_token:
-            print("Advertencia: FINNHUB_API_KEY no está configurada.")
         
         if self.gemini_key:
             genai.configure(api_key=self.gemini_key)
@@ -48,14 +44,12 @@ class AnalizadorFinanciero:
                 # 1. ROE (returnOnEquity)
                 roe = info.get("returnOnEquity")
                 if roe is not None:
-                    # yfinance suele entregar esto en decimal (ej. 0.25 para 25%)
                     val = float(roe)
                     ratios["ROE"] = val / 100.0 if val > 1.0 else val
                     
                 # 2. Deuda_EBITDA o Deuda/Equity
                 deuda_ebitda = info.get("debtToEquity")
                 if deuda_ebitda is not None:
-                    # yfinance suele entregar debtToEquity en porcentaje (ej. 150 para 1.5x)
                     ratios["Deuda_EBITDA"] = float(deuda_ebitda) / 100.0
                 else:
                     total_debt = info.get("totalDebt")
@@ -140,14 +134,12 @@ class AnalizadorFinanciero:
         # 1. Obtener precio actual y Market Cap
         precio_actual = info.get("currentPrice", info.get("regularMarketPrice", 0.0))
         if precio_actual == 0.0:
-            # Fallback a Finnhub si yfinance no tiene el precio actual en info
-            if self.finnhub_token:
-                try:
-                    res_quote = requests.get(f"{self.base_url}/quote", params={"symbol": ticker.upper(), "token": self.finnhub_token})
-                    if res_quote.status_code == 200:
-                        precio_actual = res_quote.json().get("c", 0.0)
-                except Exception as e:
-                    print(f"Error al obtener quote de Finnhub en DCF para {ticker}: {e}")
+            try:
+                hist = yf_ticker.history(period='1d')
+                if not hist.empty:
+                    precio_actual = float(hist['Close'].iloc[-1])
+            except Exception as e:
+                print(f"Error al obtener precio de history en DCF para {ticker}: {e}")
 
         market_cap = info.get("marketCap")
         try:
@@ -314,7 +306,7 @@ class AnalizadorFinanciero:
 
     def obtener_precios_objetivo(self, ticker: str, precio_actual: float = 0.0) -> dict:
         """
-        Consulta el endpoint de Finnhub de precios objetivo (/stock/price-target).
+        Consulta precios objetivo de analistas usando yfinance.
         Retorna un diccionario con los targets alto, moderado y bajo.
         """
         targets = {
@@ -322,22 +314,15 @@ class AnalizadorFinanciero:
             "moderado": None,
             "bajo": None
         }
-        if self.finnhub_token:
-            endpoint = f"{self.base_url}/stock/price-target"
-            params = {
-                "symbol": ticker.upper(),
-                "token": self.finnhub_token
-            }
-            try:
-                response = requests.get(endpoint, params=params)
-                if response.status_code == 200:
-                    data = response.json()
-                    if data:
-                        targets["alto"] = data.get("targetHigh")
-                        targets["moderado"] = data.get("targetMean")
-                        targets["bajo"] = data.get("targetLow")
-            except Exception as e:
-                print(f"Error al obtener price-target de Finnhub para {ticker}: {e}")
+        try:
+            yf_ticker = yf.Ticker(ticker.upper())
+            info = yf_ticker.info
+            if info:
+                targets["alto"] = info.get("targetHighPrice")
+                targets["moderado"] = info.get("targetMeanPrice")
+                targets["bajo"] = info.get("targetLowPrice")
+        except Exception as e:
+            print(f"Error al obtener price-target de yfinance para {ticker}: {e}")
         
         # Fallback si no hay datos de analistas pero tenemos precio actual
         if (targets["moderado"] is None or targets["moderado"] == 0) and precio_actual > 0:
@@ -415,7 +400,7 @@ class AnalizadorFinanciero:
         
         for i in range(window, len(lows) - window):
             if lows[i] == min(lows[i-window : i+window]):
-                soportes.append(round(float(lows[i]), 2))
+                soportes.append(round(float(lows[i]), 1))
         
         if not soportes:
             return []
@@ -453,7 +438,7 @@ class AnalizadorFinanciero:
 
     def obtener_analisis_tecnico(self, ticker: str, periodo: str = '1y') -> dict:
         """
-        Realiza un análisis técnico simplificado: RSI y Soportes.
+        Realiza un análisis técnico simplificado: RSI y Soportes usando Tiingo y yfinance.
         """
         df = self.obtener_precios_historicos(ticker, periodo=periodo)
         if df.empty:
@@ -463,19 +448,11 @@ class AnalizadorFinanciero:
         soportes = self.identificar_soportes(df)
         
         precio_actual = 0.0
-        if self.finnhub_token:
-            endpoint = f"{self.base_url}/quote"
-            params = {
-                "symbol": ticker.upper(),
-                "token": self.finnhub_token
-            }
-            try:
-                response = requests.get(endpoint, params=params)
-                response.raise_for_status()
-                data = response.json()
-                precio_actual = float(data.get('c', 0.0))
-            except Exception as e:
-                print(f"Error al obtener precio actual de Finnhub para {ticker}: {e}")
+        try:
+            yf_ticker = yf.Ticker(ticker.upper())
+            precio_actual = yf_ticker.info.get("currentPrice", yf_ticker.info.get("regularMarketPrice", 0.0))
+        except Exception as e:
+            print(f"Error al obtener precio actual de yfinance en técnico para {ticker}: {e}")
                 
         if precio_actual == 0.0 and not df.empty:
             precio_actual = float(df["Close"].iloc[-1])
@@ -519,28 +496,20 @@ class AnalizadorFinanciero:
 
     def obtener_noticias_recientes(self, ticker: str, limit: int = 5) -> list:
         """
-        Obtiene las últimas noticias usando la API de Finnhub.io.
+        Obtiene las últimas noticias usando yfinance.
         """
-        if not self.finnhub_token:
-            return []
-            
         try:
-            fecha_fin = datetime.now().strftime('%Y-%m-%d')
-            fecha_inicio = (datetime.now() - timedelta(days=14)).strftime('%Y-%m-%d')
-            url = f"{self.base_url}/company-news?symbol={ticker.upper()}&from={fecha_inicio}&to={fecha_fin}&token={self.finnhub_token}"
-            
-            response = requests.get(url)
-            response.raise_for_status()
-            news = response.json()
+            yf_ticker = yf.Ticker(ticker.upper())
+            news = yf_ticker.news
             
             if not news:
                 return []
                 
-            textos = [f"Título: {n.get('headline')}\nFuente: {n.get('source')}\nResumen: {n.get('summary')}" for n in news[:limit]]
+            textos = [f"Título: {n.get('title', n.get('headline', 'Sin título'))}\nFuente: {n.get('publisher', n.get('source', 'yfinance'))}\nResumen: {n.get('summary', 'Sin resumen')}" for n in news[:limit]]
             return textos
             
         except Exception as e:
-            print(f"Error al obtener noticias con Finnhub: {e}")
+            print(f"Error al obtener noticias con yfinance para {ticker}: {e}")
             return []
 
     def analizar_riesgos_ia(self, ticker: str) -> dict:
