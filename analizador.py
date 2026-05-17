@@ -175,27 +175,37 @@ class AnalizadorFinanciero:
                     beta = 1.0
 
                 # 1. Costo del Capital Propio (Cost of Equity usando CAPM)
-                rf = 4.3   # Tasa libre de riesgo (Bono EE.UU. a 10 años ~4.3%)
-                erp = 5.2  # Prima de Riesgo de Mercado (Equity Risk Premium)
+                rf = 4.3   
+                erp = 5.2  
                 cost_of_equity = rf + (beta * erp)
 
-                # 2. Extraer Estructura de Capital Real
-                deuda = metric.get("totalDebtAnnual", metric.get("totalDebtQuarterly", metric.get("netDebtAnnual")))
-
+                # 2. Extraer Capital (Equity)
                 try:
-                    E = float(market_cap) if market_cap else 0.0  # Valor de mercado del Equity
-                    D = float(deuda) if deuda else 0.0            # Deuda Total
+                    E = float(market_cap) if market_cap else 0.0
                 except (ValueError, TypeError):
                     E = 0.0
-                    D = 0.0
 
-                V = E + D  # Valor Total Corporativo
+                # 3. Extraer Deuda (Con ingeniería inversa si la API la oculta)
+                deuda_cruda = metric.get("totalDebtAnnual", metric.get("totalDebtQuarterly", metric.get("netDebtAnnual")))
+                D = float(deuda_cruda) if deuda_cruda else 0.0
+                
+                if D == 0.0 and E > 0:
+                    # Buscamos el ratio Deuda/Capital que Finnhub sí entrega gratis
+                    ratio_de = metric.get("totalDebt/totalEquity", metric.get("totalDebt/totalEquityAnnual"))
+                    if ratio_de:
+                        # Finnhub entrega esto como porcentaje (ej. 150 para 1.5)
+                        D = E * (float(ratio_de) / 100.0)
+                    else:
+                        # Último recurso salvavidas: Promedio de deuda corporativa (15%)
+                        D = E * 0.15
+                
+                V = E + D  
 
-                # 3. Costo de la Deuda (Cost of Debt) y Tasa Impositiva
-                cost_of_debt = rf + 2.0  # Spread estimado para corporativas estables
-                tax_rate = 0.21          # Impuesto corporativo EE.UU. (21%)
+                # 4. Costo de la Deuda y Tasa Impositiva
+                cost_of_debt = rf + 2.0  
+                tax_rate = 0.21          
 
-                # 4. Fórmula del WACC Ponderada con Escudo Fiscal
+                # 5. Fórmula del WACC
                 if V > 0 and E > 0:
                     peso_equity = E / V
                     peso_debt = D / V
@@ -203,24 +213,23 @@ class AnalizadorFinanciero:
                 else:
                     wacc_calculado = cost_of_equity
 
-                # Límites lógicos para evitar distorsiones por volatilidad extrema
+                # Límites lógicos 
                 if wacc_calculado < 5.0: wacc_calculado = 5.0
                 elif wacc_calculado > 18.0: wacc_calculado = 18.0
 
+                wacc_default = round(wacc_calculado, 1)
+                
                 # --- DEBUG WACC ---
                 print(f"\n--- DEBUG WACC para {ticker.upper()} ---")
-                print(f"Beta: {beta}")
-                print(f"Costo de Equity (CAPM puro): {cost_of_equity:.2f}%")
-                print(f"Market Cap (E): {E}")
-                print(f"Deuda (D): {D}")
+                print(f"Market Cap (E): {E:.2f}")
+                print(f"Deuda (D) Calculada: {D:.2f}")
                 if V > 0:
                     print(f"Peso Equity: {(E/V)*100:.2f}%")
                     print(f"Peso Deuda: {(D/V)*100:.2f}%")
-                print(f"Costo de Deuda (con escudo fiscal): {(cost_of_debt * (1 - tax_rate)):.2f}%")
-                print(f"WACC Final Calculado: {wacc_calculado:.2f}%")
+                print(f"Costo de Equity: {cost_of_equity:.2f}%")
+                print(f"Costo de Deuda (neto): {(cost_of_debt * (1 - tax_rate)):.2f}%")
+                print(f"WACC Final: {wacc_calculado:.2f}%")
                 print("--------------------------------\n")
-
-                wacc_default = round(wacc_calculado, 1)
                 # -------------------------------------------------
 
                 # --- EXTRACCIÓN DE CRECIMIENTO ESTIMADO FUTURO ---
