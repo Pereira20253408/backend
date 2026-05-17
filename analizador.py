@@ -220,16 +220,16 @@ class AnalizadorFinanciero:
                 wacc_default = round(wacc_calculado, 1)
                 
                 # --- DEBUG WACC ---
-                print(f"\n--- DEBUG WACC para {ticker.upper()} ---")
-                print(f"Market Cap (E): {E:.2f}")
-                print(f"Deuda (D) Calculada: {D:.2f}")
-                if V > 0:
-                    print(f"Peso Equity: {(E/V)*100:.2f}%")
-                    print(f"Peso Deuda: {(D/V)*100:.2f}%")
-                print(f"Costo de Equity: {cost_of_equity:.2f}%")
-                print(f"Costo de Deuda (neto): {(cost_of_debt * (1 - tax_rate)):.2f}%")
-                print(f"WACC Final: {wacc_calculado:.2f}%")
-                print("--------------------------------\n")
+                # print(f"\n--- DEBUG WACC para {ticker.upper()} ---")
+                # print(f"Market Cap (E): {E:.2f}")
+                # print(f"Deuda (D) Calculada: {D:.2f}")
+                # if V > 0:
+                #     print(f"Peso Equity: {(E/V)*100:.2f}%")
+                #     print(f"Peso Deuda: {(D/V)*100:.2f}%")
+                # print(f"Costo de Equity: {cost_of_equity:.2f}%")
+                # print(f"Costo de Deuda (neto): {(cost_of_debt * (1 - tax_rate)):.2f}%")
+                # print(f"WACC Final: {wacc_calculado:.2f}%")
+                # print("--------------------------------\n")
                 # -------------------------------------------------
 
                 # --- EXTRACCIÓN DE CRECIMIENTO ESTIMADO FUTURO ---
