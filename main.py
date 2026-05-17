@@ -74,8 +74,10 @@ def obtener_analisis_completo(ticker: str, periodo: str = '1y'):
                 "roe": ratios.get("ROE"),
                 "deuda_ebitda": ratios.get("Deuda_EBITDA"),
                 "margen_bruto": ratios.get("Margen_Bruto"),
-                "margen_neto": ratios.get("Margen_Neto")
+                "margen_neto": ratios.get("Margen_Neto"),
+                "salud_score": ratios.get("salud_score", 85)
             },
+            "salud_score": ratios.get("salud_score", 85),
             "valor_intrinseco": {
                 "dcf": dcf_data.get("dcf"),
                 "precio_actual": dcf_data.get("Stock Price") or tecnico.get("precio_actual"),

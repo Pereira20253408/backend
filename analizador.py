@@ -78,7 +78,53 @@ class AnalizadorFinanciero:
         except Exception as e:
             print(f"Error al obtener métricas de Finnhub para {ticker}: {e}")
             
+        ratios["salud_score"] = self.calcular_puntaje_salud(ratios)
         return ratios
+
+    def calcular_puntaje_salud(self, ratios: dict) -> int:
+        """
+        Calcula un puntaje de salud financiera (0 a 100) basado en ROE, Deuda/Equity y Márgenes.
+        """
+        score = 0
+        
+        # 1. ROE (máx 25 pts)
+        roe = ratios.get("ROE")
+        if roe is not None:
+            if roe >= 0.20: score += 25
+            elif roe >= 0.15: score += 20
+            elif roe >= 0.10: score += 15
+            elif roe > 0: score += 10
+            
+        # 2. Deuda/Equity (o Deuda_EBITDA) (máx 25 pts)
+        deuda = ratios.get("Deuda_EBITDA")
+        if deuda is not None:
+            if deuda < 1.0: score += 25
+            elif deuda < 2.0: score += 20
+            elif deuda < 3.0: score += 15
+            elif deuda < 4.0: score += 10
+            
+        # 3. Margen Bruto (máx 25 pts)
+        margen_bruto = ratios.get("Margen_Bruto")
+        if margen_bruto is not None:
+            if margen_bruto >= 0.40: score += 25
+            elif margen_bruto >= 0.30: score += 20
+            elif margen_bruto >= 0.20: score += 15
+            elif margen_bruto > 0: score += 10
+            
+        # 4. Margen Neto (máx 25 pts)
+        margen_neto = ratios.get("Margen_Neto")
+        if margen_neto is not None:
+            if margen_neto >= 0.15: score += 25
+            elif margen_neto >= 0.10: score += 20
+            elif margen_neto >= 0.05: score += 15
+            elif margen_neto > 0: score += 10
+            
+        if score == 0 and any(v is not None for v in ratios.values()):
+            score = 50
+        elif score == 0:
+            score = 65
+            
+        return min(score, 100)
 
     def calcular_valor_intrinseco_dcf(self, ticker: str) -> dict:
         """
