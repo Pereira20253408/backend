@@ -207,6 +207,19 @@ class AnalizadorFinanciero:
                 if wacc_calculado < 5.0: wacc_calculado = 5.0
                 elif wacc_calculado > 18.0: wacc_calculado = 18.0
 
+                # --- DEBUG WACC ---
+                print(f"\n--- DEBUG WACC para {ticker.upper()} ---")
+                print(f"Beta: {beta}")
+                print(f"Costo de Equity (CAPM puro): {cost_of_equity:.2f}%")
+                print(f"Market Cap (E): {E}")
+                print(f"Deuda (D): {D}")
+                if V > 0:
+                    print(f"Peso Equity: {(E/V)*100:.2f}%")
+                    print(f"Peso Deuda: {(D/V)*100:.2f}%")
+                print(f"Costo de Deuda (con escudo fiscal): {(cost_of_debt * (1 - tax_rate)):.2f}%")
+                print(f"WACC Final Calculado: {wacc_calculado:.2f}%")
+                print("--------------------------------\n")
+
                 wacc_default = round(wacc_calculado, 1)
                 # -------------------------------------------------
 
