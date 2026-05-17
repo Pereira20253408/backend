@@ -233,48 +233,68 @@ class AnalizadorFinanciero:
                 # -------------------------------------------------
 
                 # --- EXTRACCIÓN DE CRECIMIENTO ESTIMADO FUTURO ---
-                growth = metric.get("epsGrowth3Y")
-                if growth is None:
-                    growth = metric.get("epsGrowth5Y")
-                if growth is None:
-                    growth = metric.get("revenueGrowth5Y")
-                
-                if growth is not None:
-                    try:
-                        growth = float(growth)
-                        if growth < 1.0: growth = 5.0
-                        elif growth > 25.0: growth = 25.0
-                        growth_default = round(growth, 1)
-                    except (ValueError, TypeError):
-                        growth_default = 10.0
-                # -------------------------------------------------
+                growth = metric.get("epsGrowth3Y", metric.get("epsGrowth5Y", metric.get("revenueGrowth5Y")))
+                try:
+                    growth = float(growth) if growth is not None else 10.0
+                    if growth < 2.0: growth = 2.0
+                    elif growth > 20.0: growth = 20.0
+                except (ValueError, TypeError):
+                    growth = 10.0
+                growth_default = round(growth, 1)
 
-                if market_cap and precio_actual > 0:
-                    acciones_circulacion = float(market_cap) / precio_actual
-                elif metric.get("sharesOutstanding"):
-                    acciones_circulacion = float(metric.get("sharesOutstanding"))
+                # --- EXTRACCIÓN DE FLUJO DE CAJA (FCF) ---
+                flujo_caja_total = metric.get("freeCashFlowAnnual", metric.get("netIncomeTTM"))
+                try:
+                    flujo_caja_total = float(flujo_caja_total) if flujo_caja_total else 0.0
+                except (ValueError, TypeError):
+                    flujo_caja_total = 0.0
 
-                if eps and acciones_circulacion:
-                    flujo_caja = float(eps) * acciones_circulacion
-                elif metric.get("freeCashFlowAnnual"):
-                    flujo_caja = float(metric.get("freeCashFlowAnnual"))
-                elif metric.get("netIncomeTTM"):
-                    flujo_caja = float(metric.get("netIncomeTTM"))
+                flujo_caja = flujo_caja_total
+                deuda_neta = D
 
-                deuda = metric.get("totalDebtAnnual", metric.get("totalDebtQuarterly", metric.get("netDebtAnnual")))
-                if deuda is not None:
-                    deuda_neta = float(deuda)
-                elif market_cap:
-                    deuda_neta = float(market_cap) * 0.15
-
-                if eps and pe and eps > 0 and pe > 0:
-                    # Fórmula clásica de valoración con prima de crecimiento
-                    dcf_est = float(eps) * float(pe) * 1.15
-                elif roe and float(roe) > 0:
-                    # Estimación basada en rentabilidad sobre recursos propios
-                    dcf_est = precio_actual * (1 + (float(roe) / 100.0))
+                # --- CÁLCULO REAL DEL DCF (2 ETAPAS) ---
+                if flujo_caja_total > 0 and wacc_calculado > 0 and E > 0:
+                    wacc_decimal = wacc_calculado / 100.0
+                    growth_decimal = growth_default / 100.0
+                    tasa_terminal = 0.025  # Crecimiento a perpetuidad (2.5%)
+                    
+                    valor_presente_flujos = 0.0
+                    flujo_proyectado = flujo_caja_total
+                    
+                    # 1. Proyectar y descontar flujos (Años 1-5)
+                    for año in range(1, 6):
+                        flujo_proyectado *= (1 + growth_decimal)
+                        valor_descontado = flujo_proyectado / ((1 + wacc_decimal) ** año)
+                        valor_presente_flujos += valor_descontado
+                    
+                    # 2. Valor Terminal (Gordon Growth Model)
+                    flujo_año_5 = flujo_proyectado
+                    flujo_terminal = flujo_año_5 * (1 + tasa_terminal)
+                    
+                    if wacc_decimal > tasa_terminal:
+                        valor_terminal = flujo_terminal / (wacc_decimal - tasa_terminal)
+                        vp_valor_terminal = valor_terminal / ((1 + wacc_decimal) ** 5)
+                    else:
+                        vp_valor_terminal = 0.0
+                    
+                    # 3. Enterprise Value
+                    enterprise_value = valor_presente_flujos + vp_valor_terminal
+                    
+                    # 4. Equity Value (EV - Deuda)
+                    valor_intrinseco_total = enterprise_value - D
+                    
+                    # 5. Valor por Acción
+                    acciones_circulacion = E / precio_actual if precio_actual > 0 else 1.0
+                    if acciones_circulacion > 0:
+                        dcf_est = valor_intrinseco_total / acciones_circulacion
+                    else:
+                        dcf_est = None
                 else:
-                    dcf_est = precio_actual * 1.10
+                    dcf_est = None
+                    
+                if dcf_est is not None and dcf_est < 0:
+                    dcf_est = None
+
         except Exception as e:
             print(f"Error al obtener métricas en DCF para {ticker}: {e}")
 
